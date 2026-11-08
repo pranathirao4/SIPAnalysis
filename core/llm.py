@@ -14,24 +14,66 @@ from groq import Groq
 # Load environment variables
 load_dotenv()
 
+# llama-3.3-70b-versatile is retired on Groq. qwen/qwen3.8-27b is the
+# available chat model that still accepts JSON mode.
 DEFAULT_GROQ_MODEL = os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b")
 
-def get_groq_client() -> Groq:
-    """Retrieve Groq client using Streamlit secrets or environment variable."""
-    api_key = None
+def _clean_secret(value: Any) -> str | None:
+    """Return a usable API key, ignoring blanks and the example placeholder."""
+    if value is None:
+        return None
+    text = str(value).strip().strip('"').strip("'")
+    if not text or text in {"gsk_...", "your_key_here", "changeme"}:
+        return None
+    return text
+
+
+def resolve_groq_api_key() -> str | None:
+    """Read the Groq key from Streamlit secrets, then the environment.
+
+    Streamlit Cloud does not load a local .env file. The key has to be set in
+    the app's Secrets panel as GROQ_API_KEY.
+    """
+    load_dotenv()
     try:
         import streamlit as st
-        if hasattr(st, "secrets") and "GROQ_API_KEY" in st.secrets:
-            api_key = st.secrets["GROQ_API_KEY"]
+        secrets = getattr(st, "secrets", None)
+        if secrets is not None:
+            for key in ("GROQ_API_KEY", "groq_api_key"):
+                try:
+                    if key in secrets:
+                        found = _clean_secret(secrets[key])
+                        if found:
+                            return found
+                except Exception:
+                    continue
+            try:
+                nested = secrets["groq"]
+                found = _clean_secret(nested["api_key"] if "api_key" in nested else None)
+                if found:
+                    return found
+            except Exception:
+                pass
     except Exception:
         pass
 
-    if not api_key:
-        api_key = os.getenv("GROQ_API_KEY")
+    for env_name in ("GROQ_API_KEY", "GROQ_KEY"):
+        found = _clean_secret(os.getenv(env_name))
+        if found:
+            return found
+    return None
 
+
+def groq_configured() -> bool:
+    """True when a real Groq API key is available to this process."""
+    return resolve_groq_api_key() is not None
+
+
+def get_groq_client() -> Groq:
+    """Retrieve Groq client using Streamlit secrets or environment variable."""
+    api_key = resolve_groq_api_key()
     if not api_key:
         raise ValueError("GROQ_API_KEY not found in Streamlit secrets or environment variables.")
-
     return Groq(api_key=api_key)
 
 
@@ -83,16 +125,21 @@ RULES:
    - Tone: Calm, neutral, reassuring without making promises.
    - Length: Maximum 110 words total. Average sentence length at most 22 words.
    - NEVER give financial advice. NEVER say what the user should do. NEVER predict prices.
+   - If the user message includes "must_cite", the answer MUST contain every listed placeholder. Do not skip any of them.
 """
 
 
 def generate_llm_response(
     question: str,
     computed: dict[str, Any],
-    retry_reason: str | None = None
+    retry_reason: str | None = None,
+    must_cite: list[str] | None = None,
 ) -> dict[str, str]:
     """Call Groq API to generate route and answer."""
-    client = get_groq_client()
+    try:
+        client = get_groq_client()
+    except ValueError:
+        return {"route": "invalid_json", "answer": ""}
 
     metrics = {
         "scenario": computed["scenario"],
@@ -114,11 +161,14 @@ def generate_llm_response(
         "relation": computed["relation"],
     }
 
-    user_content = json.dumps({
+    payload = {
         "metrics": metrics,
         "question": question,
-        "glossary": GLOSSARY
-    }, indent=2)
+        "glossary": GLOSSARY,
+    }
+    if must_cite:
+        payload["must_cite"] = must_cite
+    user_content = json.dumps(payload, indent=2)
 
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT}
@@ -132,13 +182,16 @@ def generate_llm_response(
 
     messages.append({"role": "user", "content": user_content})
 
-    response = client.chat.completions.create(
-        model=DEFAULT_GROQ_MODEL,
-        messages=messages,
-        response_format={"type": "json_object"},
-        temperature=0.2,
-        max_tokens=450
-    )
+    try:
+        response = client.chat.completions.create(
+            model=DEFAULT_GROQ_MODEL,
+            messages=messages,
+            response_format={"type": "json_object"},
+            temperature=0.2,
+            max_tokens=450
+        )
+    except Exception:
+        return {"route": "invalid_json", "answer": ""}
 
     raw_text = response.choices[0].message.content or "{}"
     try:

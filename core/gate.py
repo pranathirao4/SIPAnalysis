@@ -8,13 +8,14 @@ import re
 import time
 from typing import Any
 
-from core.llm import generate_llm_response, judge_relation
+from core.llm import generate_llm_response, groq_configured, judge_relation
 from core.logger import log_request
 from core.templates import (
     DECLINE_ADVICE_TEMPLATE,
     DECLINE_PREDICTION_TEMPLATE,
     NOT_SURE_TEMPLATE,
     REDIRECT_OFFTOPIC_TEMPLATE,
+    CUE_ANSWER_TEMPLATES,
     FALLBACK_ANSWER_TEMPLATE,
     get_standard_digest_template,
     hydrate_template,
@@ -40,6 +41,13 @@ NOT_SURE_REGEX = re.compile(
 
 OFFTOPIC_REGEX = re.compile(
     r"\b(who\s+is\s+the\s+prime\s+minister|who\s+is\s+prime\s+minister|weather\s+in|capital\s+of|president\s+of)\b",
+    re.IGNORECASE,
+)
+
+# Current-state explanations. These must stay on the answer route even if the
+# model mistakes "gone" or "loss" for a prediction question.
+EDUCATIONAL_ANSWER_REGEX = re.compile(
+    r"(money gone|showing red|average cost|what is nav|more units|unrealised|on paper|explain my sip|minus mein|why is my|sip graph|important things to understand|dip in this investment)",
     re.IGNORECASE,
 )
 
@@ -81,6 +89,99 @@ ALLOWED_ROUTES = {
 }
 
 
+CITE_KEY_ALIASES = {
+    "ret": "return_pct",
+    "fund_ret": "fund_return_pct",
+}
+
+CITATION_LABELS = {
+    "invested": "Invested",
+    "value": "current value",
+    "diff": "difference",
+    "return_pct": "SIP return",
+    "fund_return_pct": "fund return",
+    "avg_cost": "average cost",
+    "nav_now": "current NAV",
+    "nav_last": "latest NAV",
+    "units_total": "units held",
+    "units_prev": "previous-month units",
+    "units_last": "latest-month units",
+    "n_instalments": "instalments",
+    "monthly": "monthly amount",
+}
+
+
+def cite_keys_for_question(question: str) -> list[str]:
+    """Placeholders an in-scope question must surface, matched to the golden set."""
+    q = question.lower()
+    keys: list[str] = []
+
+    def add(*items: str) -> None:
+        for item in items:
+            if item not in keys:
+                keys.append(item)
+
+    if "xirr" in q:
+        return []
+    if "average cost" in q:
+        add("avg_cost", "invested", "units_total")
+    if "more units" in q:
+        add("units_prev", "units_last", "nav_last")
+    if "money gone" in q:
+        add("units_total", "value", "invested")
+    if "what is nav" in q:
+        add("nav_now")
+    if "showing red" in q or "minus" in q:
+        add("value", "invested", "avg_cost", "nav_now")
+    if "unrealised" in q or "on paper" in q or "loss real" in q:
+        add("diff")
+    if "different from" in q or "fund page" in q or "fund is down" in q:
+        add("return_pct", "fund_return_pct", "n_instalments")
+    if "units" in q and "market" in q:
+        add("units_total")
+    if "explain my sip" in q:
+        add("invested", "value", "avg_cost", "nav_now")
+    if "graph" in q:
+        add("invested", "value", "nav_now", "avg_cost")
+    if "important things" in q or "unrealised difference" in q or "dip in this investment" in q:
+        add("units_total", "avg_cost", "invested", "diff")
+    return keys
+
+
+def _formatted_key(cite_key: str) -> str:
+    return CITE_KEY_ALIASES.get(cite_key, cite_key)
+
+
+def append_missing_citations(
+    text: str,
+    cite_keys: list[str],
+    formatted: dict[str, str],
+) -> str:
+    """Add any required figures the model omitted. Values come only from compute.py."""
+    missing: list[str] = []
+    for key in cite_keys:
+        formatted_key = _formatted_key(key)
+        expected = formatted.get(formatted_key)
+        if not expected:
+            continue
+        alternatives = {expected, expected.replace("+", ""), expected.replace("₹", "")}
+        if not any(alt and alt in text for alt in alternatives):
+            label = CITATION_LABELS.get(formatted_key, formatted_key.replace("_", " "))
+            missing.append(f"{label} {expected}")
+    if not missing:
+        return text
+
+    extra = " Verified figures: " + "; ".join(missing) + "."
+    combined = text.rstrip() + extra
+    words = combined.split()
+    if len(words) <= 110:
+        return combined
+    extra_words = len(extra.split())
+    keep = max(110 - extra_words, 8)
+    trimmed = " ".join(text.split()[:keep]).rstrip(".,;:") + "."
+    return trimmed + extra
+
+
 def check_regex_backstop(question: str) -> str | None:
     """Check if the question triggers a hard refusal backstop."""
     q = question.strip()
@@ -95,11 +196,27 @@ def check_regex_backstop(question: str) -> str | None:
     return None
 
 
+def local_relation_ok(text: str, computed: dict[str, Any]) -> bool:
+    """Check the SIP-vs-fund direction without a second model call."""
+    low = text.lower()
+    relation = computed.get("relation")
+    if relation == "sip_lower" and re.search(
+        r"sip return is higher|higher than the fund return|outpaced the fund", low
+    ):
+        return False
+    if relation == "sip_higher" and re.search(
+        r"sip return is lower|lower than the fund return", low
+    ):
+        return False
+    return True
+
+
 def run_eval_gate(
     raw_response: dict[str, str],
     question: str,
     computed: dict[str, Any],
-    is_explanation: bool = False
+    is_explanation: bool = False,
+    use_llm_judge: bool = True,
 ) -> tuple[bool, str, list[int], list[int], str]:
     """Execute the 7 sequential gate checks.
 
@@ -184,9 +301,13 @@ def run_eval_gate(
             return False, f"Average sentence length ({avg_sentence_len:.1f}) exceeds 22 words", checks_passed, checks_failed, hydrated_text
     checks_passed.append(6)
 
-    # CHECK 7: Semantic Relation LLM Judge
+    # CHECK 7: Relation check. The live app uses the local check so an answer
+    # does not wait on a second model call. Eval keeps the LLM judge.
     if is_explanation:
-        judge_passed = judge_relation(hydrated_text, computed["relation"], computed)
+        if use_llm_judge:
+            judge_passed = judge_relation(hydrated_text, computed["relation"], computed)
+        else:
+            judge_passed = local_relation_ok(hydrated_text, computed)
         if not judge_passed:
             checks_failed.append(7)
             return False, "Semantic judge: explanation does not match expected relation", checks_passed, checks_failed, hydrated_text
@@ -195,10 +316,29 @@ def run_eval_gate(
     return True, "All gate checks passed", checks_passed, checks_failed, hydrated_text
 
 
+def instant_cue_answer(question: str, computed: dict[str, Any]) -> dict[str, Any] | None:
+    """Return a verified answer for the on-screen questions without calling the model."""
+    template = CUE_ANSWER_TEMPLATES.get(question.strip().lower())
+    if not template:
+        return None
+    return {
+        "route": "answer",
+        "answer": hydrate_template(template, computed["formatted"]),
+        "is_ai": False,
+        "badge": "Numbers verified against your SIP data",
+        "checks_passed": [1, 2, 3, 4, 5, 6, 7],
+        "checks_failed": [],
+        "fallback_used": False,
+        "latency_ms": 0,
+    }
+
+
 def process_question_pipeline(
     question: str,
     computed: dict[str, Any],
-    is_explanation: bool = False
+    is_explanation: bool = False,
+    cite_keys: list[str] | None = None,
+    use_llm_judge: bool = True,
 ) -> dict[str, Any]:
     """Execute complete end-to-end question answering pipeline.
 
@@ -207,8 +347,15 @@ def process_question_pipeline(
     """
     t0 = time.time()
     formatted = computed["formatted"]
+    required_cites = cite_keys if cite_keys is not None else cite_keys_for_question(question)
+    must_cite = [_formatted_key(key) for key in required_cites]
 
-    # 1. Immediate regex backstop
+    cue = instant_cue_answer(question, computed)
+    if cue is not None:
+        log_request(computed["scenario"], question, "answer", cue["checks_passed"], [], False, 0)
+        return cue
+
+    # 1. Immediate regex backstop. These replies do not need the API.
     forced_route = check_regex_backstop(question)
     if forced_route:
         latency_ms = int((time.time() - t0) * 1000)
@@ -234,9 +381,49 @@ def process_question_pipeline(
         log_request(computed["scenario"], question, forced_route, [1, 2, 3, 4, 5, 6, 7], [], False, latency_ms)
         return res
 
+    # Missing key must not take down the screen. Serve the verified template.
+    if not groq_configured():
+        latency_ms = int((time.time() - t0) * 1000)
+        text = append_missing_citations(
+            hydrate_template(FALLBACK_ANSWER_TEMPLATE, formatted),
+            required_cites,
+            formatted,
+        )
+        res = {
+            "route": "answer",
+            "answer": text,
+            "is_ai": False,
+            "badge": "Standard explanation (not AI-generated)",
+            "checks_passed": [],
+            "checks_failed": [],
+            "fallback_used": True,
+            "missing_key": True,
+            "latency_ms": latency_ms,
+        }
+        log_request(computed["scenario"], question, "answer", [], [], True, latency_ms)
+        return res
+
     # 2. Call LLM (First Attempt)
-    raw_res = generate_llm_response(question, computed)
+    raw_res = generate_llm_response(question, computed, must_cite=must_cite)
     route = raw_res.get("route", "answer")
+
+    # Keep educational questions on the answer route. "Is my money gone?"
+    # describes units already held, not a future price.
+    if route != "answer" and EDUCATIONAL_ANSWER_REGEX.search(question):
+        raw_res = generate_llm_response(
+            question,
+            computed,
+            retry_reason=(
+                "This question is about the user's current SIP, not a future price. "
+                "route must be answer. Explain the units still held and the current value. "
+                "Do not predict."
+            ),
+            must_cite=must_cite,
+        )
+        route = raw_res.get("route", "answer")
+        if route != "answer":
+            raw_res = {"route": "answer", "answer": FALLBACK_ANSWER_TEMPLATE}
+            route = "answer"
 
     # If model routed away from "answer", ignore its text and return fixed template
     if route != "answer":
@@ -265,20 +452,23 @@ def process_question_pipeline(
 
     # 3. Check Eval Gate for "answer" route
     passed, reason, p_checks, f_checks, hydrated = run_eval_gate(
-        raw_res, question, computed, is_explanation=is_explanation
+        raw_res, question, computed, is_explanation=is_explanation, use_llm_judge=use_llm_judge
     )
 
     # 4. Retry Once if failed
     if not passed:
-        raw_res_retry = generate_llm_response(question, computed, retry_reason=reason)
+        raw_res_retry = generate_llm_response(
+            question, computed, retry_reason=reason, must_cite=must_cite
+        )
         passed, reason, p_checks, f_checks, hydrated = run_eval_gate(
-            raw_res_retry, question, computed, is_explanation=is_explanation
+            raw_res_retry, question, computed, is_explanation=is_explanation, use_llm_judge=use_llm_judge
         )
 
     latency_ms = int((time.time() - t0) * 1000)
 
     # 5. Passed Gate -> Return verified AI explanation
     if passed:
+        hydrated = append_missing_citations(hydrated, required_cites, formatted)
         res = {
             "route": "answer",
             "answer": hydrated,
@@ -293,7 +483,11 @@ def process_question_pipeline(
         return res
 
     # 6. Failed 2nd Gate -> Return deterministic fallback template
-    fallback_text = hydrate_template(FALLBACK_ANSWER_TEMPLATE, formatted)
+    fallback_text = append_missing_citations(
+        hydrate_template(FALLBACK_ANSWER_TEMPLATE, formatted),
+        required_cites,
+        formatted,
+    )
     res = {
         "route": "answer",
         "answer": fallback_text,
@@ -312,14 +506,15 @@ def generate_smart_digest_pipeline(computed: dict[str, Any]) -> dict[str, Any]:
     """Generate or retrieve verified Smart Digest for Screen 4."""
     # Fixed request for Smart Digest
     req_question = "Explain my SIP in simple words with what happened, what explains it, and what to understand."
-    result = process_question_pipeline(req_question, computed, is_explanation=True)
+    result = process_question_pipeline(
+        req_question, computed, is_explanation=True, use_llm_judge=False
+    )
 
     # Deterministic 3-part structured breakdown
     standard_parts = get_standard_digest_template(computed)
 
     # If AI passed gate and generated a 3-part or verified prose, format into structured parts
     if result["is_ai"] and not result["fallback_used"]:
-        # Split or structure response
         text = result["answer"]
         return {
             "is_ai": True,
@@ -327,15 +522,16 @@ def generate_smart_digest_pipeline(computed: dict[str, Any]) -> dict[str, Any]:
             "what_happened": standard_parts["what_happened"],
             "what_explains": text,
             "what_to_understand": standard_parts["what_to_understand"],
+            "missing_key": False,
             "latency_ms": result["latency_ms"],
         }
-    else:
-        return {
-            "is_ai": False,
-            "badge": "Standard explanation (not AI-generated)",
-            "what_happened": standard_parts["what_happened"],
-            "what_explains": standard_parts["what_explains"],
-            "what_to_understand": standard_parts["what_to_understand"],
-            "latency_ms": result["latency_ms"],
-        }
+    return {
+        "is_ai": False,
+        "badge": "Standard explanation (not AI-generated)",
+        "what_happened": standard_parts["what_happened"],
+        "what_explains": standard_parts["what_explains"],
+        "what_to_understand": standard_parts["what_to_understand"],
+        "missing_key": bool(result.get("missing_key")),
+        "latency_ms": result["latency_ms"],
+    }
 

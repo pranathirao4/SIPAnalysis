@@ -140,6 +140,49 @@ def get_standard_digest_template(computed: dict[str, Any]) -> dict[str, str]:
     }
 
 
+# Exact questions on the Ask card. Answers use only computed placeholders.
+CUE_ANSWER_TEMPLATES = {
+    "why is my sip lower than the fund?": (
+        "You invested {invested} and those units are worth {value} today. "
+        "Your SIP return is {return_pct}. The fund return since you started is {fund_return_pct}. "
+        "The SIP return is lower because the {n_instalments} instalments were purchased at different NAV levels, not all on day one. "
+        "A difference only becomes a gain or loss when units are sold."
+    ),
+    "is my money gone when value is down?": (
+        "Your current value is {value} and you invested {invested}, a difference of {diff}. "
+        "You still hold {units_total} units. The money is not gone. "
+        "A lower value means today's NAV is below some of your purchase prices. "
+        "A difference only becomes a gain or loss when units are sold."
+    ),
+    "how do i check this sip graph?": (
+        "Read the two lines on the SIP graph. The invested line is the cash paid in, which is {invested}. "
+        "The value line is your units times today's NAV of {nav_now}, which is {value}. "
+        "Your average cost is {avg_cost}. "
+        "The value line sits below the invested line when today's NAV is below the prices of earlier instalments."
+    ),
+    "what does a dip in this investment mean?": (
+        "A dip means today's price is below the price of some earlier instalments. "
+        "Your average cost is {avg_cost}. The current value is {value} against {invested} invested, a difference of {diff}. "
+        "You still hold {units_total} units. "
+        "A difference only becomes a gain or loss when units are sold."
+    ),
+    "what does average cost mean?": (
+        "Average cost is the invested amount divided by the units you hold. "
+        "You invested {invested} for {units_total} units, so the average cost is {avg_cost}. "
+        "Today's NAV is {nav_now}."
+    ),
+    "why did i get more units last month?": (
+        "Last month's NAV was {nav_last}. The instalment of {monthly} bought {units_last} units. "
+        "The previous instalment bought {units_prev} units. "
+        "The same instalment buys more units when the NAV is lower."
+    ),
+    "is my money gone?": (
+        "Your current value is {value} and you invested {invested}. You still hold {units_total} units. "
+        "The money is not gone. A difference only becomes a gain or loss when units are sold."
+    ),
+}
+
+
 def hydrate_template(template_str: str, formatted: dict[str, str]) -> str:
     """Safely format a template string with computed formatted values."""
     try:

@@ -4,8 +4,10 @@ Explains in plain English why a user's SIP value can sit below their invested
 amount even when the fund itself is only slightly down.
 """
 
+import html
 import json
 from pathlib import Path
+import re
 import time
 import streamlit as st
 import plotly.graph_objects as go
@@ -73,7 +75,7 @@ if "history_horizon" not in st.session_state:
     st.session_state["history_horizon"] = "Since you started (7M)"
 
 if "ai_vs_standard" not in st.session_state:
-    st.session_state["ai_vs_standard"] = "AI"
+    st.session_state["ai_vs_standard"] = "Standard"
 
 if "smart_digest_cache" not in st.session_state:
     st.session_state["smart_digest_cache"] = {}
@@ -82,18 +84,21 @@ if "smart_digest_cache" not in st.session_state:
 # Navigation Helpers
 # -----------------------------------------------------------------------------
 def navigate_to(screen_name: str):
-    if st.session_state.get("screen") != screen_name:
-        st.session_state["history_stack"].append(screen_name)
-        st.session_state["screen"] = screen_name
-        st.rerun()
+    """Run before the script body so a tap opens the next screen on the first run."""
+    def _go():
+        if st.session_state.get("screen") != screen_name:
+            st.session_state["history_stack"].append(screen_name)
+            st.session_state["screen"] = screen_name
+    return _go
 
 def go_back(fallback: str = "home"):
-    if len(st.session_state["history_stack"]) > 1:
-        st.session_state["history_stack"].pop()
-        st.session_state["screen"] = st.session_state["history_stack"][-1]
-    else:
-        st.session_state["screen"] = fallback
-    st.rerun()
+    def _go():
+        if len(st.session_state["history_stack"]) > 1:
+            st.session_state["history_stack"].pop()
+            st.session_state["screen"] = st.session_state["history_stack"][-1]
+        else:
+            st.session_state["screen"] = fallback
+    return _go
 
 # -----------------------------------------------------------------------------
 # Custom CSS for Mobile Fidelity & Chrome Removal
@@ -157,6 +162,141 @@ st.markdown("""
         padding: 18px;
         color: #FFFFFF;
         margin-bottom: 14px;
+    }
+
+    /* Ask-about-your-SIP card, same navy system as the quiz */
+    .st-key-ask_sip_card {
+        background: #1E1B4B !important;
+        border: 1px solid rgba(165, 180, 252, 0.22) !important;
+        border-radius: 18px !important;
+        padding: 16px 14px 12px 14px !important;
+        margin-bottom: 14px;
+        box-shadow: 0 10px 28px rgba(30, 27, 75, 0.22);
+    }
+    .st-key-ask_sip_card div.stButton > button {
+        background: #2A2768 !important;
+        color: #E0E7FF !important;
+        border: 1px solid rgba(165, 180, 252, 0.38) !important;
+        border-radius: 12px !important;
+        font-weight: 600;
+        min-height: 44px;
+    }
+    .st-key-ask_sip_card div.stButton > button p,
+    .st-key-ask_sip_card div.stButton > button span,
+    .st-key-ask_sip_card div.stButton > button div {
+        color: #E0E7FF !important;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .st-key-ask_sip_card div.stButton > button:hover {
+        background: #37338A !important;
+        border-color: rgba(196, 181, 253, 0.7) !important;
+        color: #FFFFFF !important;
+    }
+    /* Suggested questions: plain white lines, left aligned, no boxes */
+    .st-key-ask_cues {
+        gap: 2px !important;
+    }
+    .st-key-ask_cues [data-testid="stVerticalBlock"] {
+        gap: 2px !important;
+    }
+    .st-key-ask_cues [data-testid="stElementContainer"],
+    .st-key-ask_cues .stElementContainer {
+        margin: 0 !important;
+        padding: 0 !important;
+    }
+    .st-key-ask_cues div.stButton {
+        margin: 0 !important;
+    }
+    .st-key-ask_cues div.stButton > button {
+        background: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
+        border-radius: 0 !important;
+        min-height: 0 !important;
+        height: auto !important;
+        width: 100% !important;
+        padding: 3px 0 !important;
+        margin: 0 !important;
+        justify-content: flex-start !important;
+        text-align: left !important;
+    }
+    .st-key-ask_cues div.stButton > button p,
+    .st-key-ask_cues div.stButton > button span,
+    .st-key-ask_cues div.stButton > button div {
+        color: #FFFFFF !important;
+        overflow: visible !important;
+        text-overflow: unset !important;
+        white-space: normal !important;
+        text-align: left !important;
+        font-size: 13.5px !important;
+        font-weight: 500 !important;
+        line-height: 1.35 !important;
+        margin: 0 !important;
+        width: 100% !important;
+    }
+    .st-key-ask_cues div.stButton > button:hover {
+        background: transparent !important;
+        border: none !important;
+        color: #FFFFFF !important;
+        text-decoration: underline;
+    }
+    .st-key-ask_sip_card div[data-testid="stFormSubmitButton"] > button {
+        background: #00B386 !important;
+        color: #FFFFFF !important;
+        border: none !important;
+        border-radius: 12px !important;
+        min-height: 44px;
+        font-size: 18px;
+    }
+    .st-key-ask_sip_card div[data-testid="stFormSubmitButton"] > button p,
+    .st-key-ask_sip_card div[data-testid="stFormSubmitButton"] > button span,
+    .st-key-ask_sip_card div[data-testid="stFormSubmitButton"] > button div {
+        color: #FFFFFF !important;
+    }
+    .st-key-ask_sip_card [data-testid="stTextInputRootElement"] {
+        background: #2A2768 !important;
+        border: 1px solid rgba(165, 180, 252, 0.45) !important;
+        border-radius: 12px !important;
+    }
+    .st-key-ask_sip_card [data-testid="stTextInput"] input {
+        background: transparent !important;
+        color: #E0E7FF !important;
+        -webkit-text-fill-color: #E0E7FF !important;
+        caret-color: #5EEAD4;
+        border: none !important;
+    }
+    .st-key-ask_sip_card [data-testid="stTextInput"] input::placeholder {
+        color: #A5B4FC !important;
+        -webkit-text-fill-color: #A5B4FC !important;
+        opacity: 1;
+    }
+    .st-key-ask_sip_card [data-testid="stExpander"] details {
+        background: #2A2768 !important;
+        border: 1px solid rgba(165, 180, 252, 0.35) !important;
+        border-radius: 12px !important;
+    }
+    .st-key-ask_sip_card [data-testid="stExpander"] summary,
+    .st-key-ask_sip_card [data-testid="stExpander"] p,
+    .st-key-ask_sip_card [data-testid="stExpander"] span {
+        color: #E0E7FF !important;
+    }
+    .st-key-ask_sip_card [data-testid="stHorizontalBlock"] {
+        flex-wrap: nowrap !important;
+        align-items: center !important;
+        gap: 8px !important;
+    }
+    .st-key-ask_sip_card [data-testid="stColumn"] {
+        flex: 1 1 0% !important;
+        width: 0 !important;
+        min-width: 0 !important;
+    }
+    .st-key-ask_sip_card [data-testid="stForm"] [data-testid="stColumn"]:last-child {
+        flex: 0 0 52px !important;
+        width: 52px !important;
+        min-width: 52px !important;
+        max-width: 52px !important;
     }
 
     /* Gradient Portfolio Card */
@@ -282,12 +422,22 @@ st.markdown("""
         z-index: 9999;
     }
 
-    /* Streamlit button custom styling inside app */
+    /* Streamlit button custom styling inside app.
+       Touch targets stay at least 44px for mobile. */
     div.stButton > button {
         border-radius: 12px;
         font-weight: 600;
         border: 1px solid #E2E8F0;
+        min-height: 44px;
         transition: all 0.15s ease-in-out;
+    }
+
+    div[data-testid="stFormSubmitButton"] > button {
+        min-height: 44px;
+        min-width: 44px;
+        background-color: #00B386;
+        color: #FFFFFF;
+        border: none;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -302,8 +452,7 @@ def render_top_header(title: str, subtitle: str = "", show_back: bool = True, fa
         if show_back:
             back_col, title_col = st.columns([0.15, 0.85])
             with back_col:
-                if st.button("←", key=f"back_btn_{title}_{subtitle}", help="Go back"):
-                    go_back(fallback_back)
+                st.button("←", key=f"back_btn_{title}_{subtitle}", help="Go back", on_click=go_back(fallback_back))
             with title_col:
                 st.markdown(f"<div style='font-size: 18px; font-weight: 700; color: #0F172A; line-height: 1.2;'>{title}</div>{sub_html}", unsafe_allow_html=True)
         else:
@@ -321,12 +470,10 @@ def render_segmented_toggle(active_tab: str):
     col1, col2 = st.columns(2)
     with col1:
         is_my_inv = (active_tab == "my_investment")
-        if st.button("👤 My Investment", key="toggle_my_investment", use_container_width=True, type="primary" if is_my_inv else "secondary"):
-            navigate_to("my_investment")
+        st.button("👤 My Investment", key="toggle_my_investment", use_container_width=True, type="primary" if is_my_inv else "secondary", on_click=navigate_to("my_investment"))
     with col2:
         is_hist = (active_tab == "fund_history")
-        if st.button("📈 Fund History", key="toggle_fund_history", use_container_width=True, type="primary" if is_hist else "secondary"):
-            navigate_to("fund_history")
+        st.button("📈 Fund History", key="toggle_fund_history", use_container_width=True, type="primary" if is_hist else "secondary", on_click=navigate_to("fund_history"))
     st.markdown("<div style='margin-bottom: 12px;'></div>", unsafe_allow_html=True)
 
 def render_bottom_navigation():
@@ -338,11 +485,9 @@ def render_bottom_navigation():
     st.markdown("<div style='height: 35px;'></div>", unsafe_allow_html=True)
     nav_c1, nav_c2 = st.columns(2)
     with nav_c1:
-        if st.button("🏠 Home", key="bnav_home", use_container_width=True, type="primary" if is_home_active else "secondary"):
-            navigate_to("home")
+        st.button("🏠 Home", key="bnav_home", use_container_width=True, type="primary" if is_home_active else "secondary", on_click=navigate_to("home"))
     with nav_c2:
-        if st.button("📊 My SIPs", key="bnav_sips", use_container_width=True, type="primary" if is_sips_active else "secondary"):
-            navigate_to("my_sips")
+        st.button("📊 My SIPs", key="bnav_sips", use_container_width=True, type="primary" if is_sips_active else "secondary", on_click=navigate_to("my_sips"))
 
 def render_footer_disclaimer():
     st.markdown("""
@@ -398,8 +543,7 @@ def render_screen_home():
     with tm_col1:
         st.markdown("<div style='font-size: 12px; font-weight: 700; color: #0F172A; margin-bottom: 6px;'>● THIS MONTH</div>", unsafe_allow_html=True)
     with tm_col2:
-        if st.button("View SIPs >", key="home_view_sips_link"):
-            navigate_to("my_sips")
+        st.button("View SIPs >", key="home_view_sips_link", on_click=navigate_to("my_sips"))
 
     st.markdown(f"""
     <div class="mobile-card" style="padding: 14px; display: flex; align-items: center; justify-content: space-between;">
@@ -442,8 +586,7 @@ def render_screen_home():
         </div>
         """, unsafe_allow_html=True)
 
-    if st.button("Explore Axis Bluechip SIP →", key="btn_home_ab", use_container_width=True):
-        navigate_to("sip_overview")
+    st.button("Explore Axis Bluechip SIP →", key="btn_home_ab", use_container_width=True, on_click=navigate_to("sip_overview"))
 
     st.markdown("<div style='border-top: 1px solid #E2E8F0; margin: 8px 0;'></div>", unsafe_allow_html=True)
 
@@ -469,8 +612,7 @@ def render_screen_home():
         </div>
         """, unsafe_allow_html=True)
 
-    if st.button("Explore Parag Parikh SIP →", key="btn_home_pp", use_container_width=True):
-        navigate_to("my_sips")
+    st.button("Explore Parag Parikh SIP →", key="btn_home_pp", use_container_width=True, on_click=navigate_to("my_sips"))
 
 
 # =============================================================================
@@ -532,8 +674,7 @@ def render_screen_my_sips():
     </div>
     """, unsafe_allow_html=True)
 
-    if st.button("ℹ See how your SIP works. Explain >", key="btn_explain_ab", use_container_width=True):
-        navigate_to("sip_overview")
+    st.button("ℹ See how your SIP works. Explain >", key="btn_explain_ab", use_container_width=True, on_click=navigate_to("sip_overview"))
 
     st.markdown("<div style='margin-bottom: 14px;'></div>", unsafe_allow_html=True)
 
@@ -711,8 +852,7 @@ def render_screen_sip_overview():
         </div>
     </div>
     """, unsafe_allow_html=True)
-    if st.button("Open Analysis →", key="btn_open_analysis", use_container_width=True):
-        navigate_to("my_investment")
+    st.button("Open Analysis →", key="btn_open_analysis", use_container_width=True, on_click=navigate_to("my_investment"))
 
     # Choice 2: Understand Fund History
     st.markdown("""
@@ -726,8 +866,7 @@ def render_screen_sip_overview():
         </div>
     </div>
     """, unsafe_allow_html=True)
-    if st.button("Open History →", key="btn_open_history", use_container_width=True):
-        navigate_to("fund_history")
+    st.button("Open History →", key="btn_open_history", use_container_width=True, on_click=navigate_to("fund_history"))
 
 
 def extract_data_chips(text: str, computed: dict) -> list[str]:
@@ -750,6 +889,54 @@ def extract_data_chips(text: str, computed: dict) -> list[str]:
     return chips[:4]
 
 
+def _ask_body_html(text: str) -> str:
+    """Escape answer text and turn official URLs into accent-coloured links."""
+    safe = html.escape(text)
+    safe = re.sub(
+        r"https://[^\s<]+",
+        lambda match: (
+            f'<a href="{match.group(0)}" target="_blank" rel="noopener noreferrer" '
+            f'style="color:#5EEAD4; text-decoration:underline;">{match.group(0)}</a>'
+        ),
+        safe,
+    )
+    return safe.replace("\n", "<br>")
+
+
+def _flat_html(markup: str) -> str:
+    """Keep HTML on one line so Streamlit does not render it as a code block."""
+    return "".join(line.strip() for line in markup.splitlines() if line.strip())
+
+
+def _ask_panel(title: str, badge: str, body_html: str) -> str:
+    """Lighter-indigo panel used for every reply inside the navy Ask card."""
+    header_bits = []
+    if title:
+        header_bits.append(
+            f'<span style="font-weight:700; font-size:13px; color:#FFFFFF;">{title}</span>'
+        )
+    if badge:
+        header_bits.append(
+            '<span style="font-size:10px; font-weight:700; color:#C4B5FD; '
+            "background:rgba(255,255,255,0.08); border:1px solid rgba(165,180,252,0.4); "
+            f'border-radius:999px; padding:3px 8px; white-space:nowrap;">{badge}</span>'
+        )
+    header = ""
+    if header_bits:
+        header = (
+            '<div style="display:flex; justify-content:space-between; align-items:flex-start; '
+            f'gap:8px; margin-bottom:8px;">{"".join(header_bits)}</div>'
+        )
+    return _flat_html(
+        f"""
+        <div style="background:#2A2768; border:1px solid rgba(165,180,252,0.38); border-radius:14px; padding:14px; margin-bottom:8px;">
+            {header}
+            <div style="font-size:12px; line-height:1.55; color:#E0E7FF;">{_flat_html(body_html)}</div>
+        </div>
+        """
+    )
+
+
 @st.fragment
 def render_ask_card_fragment(data: dict):
     """Inline interactive Ask Card running inside st.fragment to eliminate page flicker."""
@@ -759,29 +946,26 @@ def render_ask_card_fragment(data: dict):
         st.session_state["ask_pending_query"] = None
 
     st.markdown("""
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+    <div class="ask-sip-anchor" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
         <div style="display: flex; align-items: center; gap: 6px;">
             <span style="font-size: 16px;">💬</span>
-            <span style="font-size: 14px; font-weight: 700; color: #0F172A;">Ask about your SIP</span>
+            <span style="font-size: 15px; font-weight: 700; color: #FFFFFF;">Ask about your SIP</span>
         </div>
-        <span class="pill-green">AI ASSISTANT</span>
+        <span class="pill-green" style="background-color: #00B386; color: #FFFFFF;">AI ASSISTANT</span>
     </div>
     """, unsafe_allow_html=True)
 
-    # 3 Suggested Quick Chips
-    qc1, qc2, qc3 = st.columns(3)
-    with qc1:
-        if st.button("Why is SIP lower?", key="qc_why_lower", use_container_width=True):
-            st.session_state["ask_pending_query"] = "Why is my SIP lower than the fund?"
-            st.rerun(scope="fragment")
-    with qc2:
-        if st.button("What is avg cost?", key="qc_avg_cost", use_container_width=True):
-            st.session_state["ask_pending_query"] = "What does average cost mean?"
-            st.rerun(scope="fragment")
-    with qc3:
-        if st.button("Is my money gone?", key="qc_money_gone", use_container_width=True):
-            st.session_state["ask_pending_query"] = "Is my money gone?"
-            st.rerun(scope="fragment")
+    # Four full questions as plain left-aligned lines. The label is the question asked.
+    cue_questions = [
+        ("qc_why_lower", "Why is my SIP lower than the fund?"),
+        ("qc_money_gone", "Is my money gone when value is down?"),
+        ("qc_validate_graph", "How do I check this SIP graph?"),
+        ("qc_dip_learn", "What does a dip in this investment mean?"),
+    ]
+    with st.container(key="ask_cues"):
+        for cue_key, cue_question in cue_questions:
+            if st.button(cue_question, key=cue_key, use_container_width=True):
+                st.session_state["ask_pending_query"] = cue_question
 
     # Input Form
     with st.form("inline_ask_form", clear_on_submit=True):
@@ -798,18 +982,28 @@ def render_ask_card_fragment(data: dict):
 
         if submitted and user_input.strip():
             st.session_state["ask_pending_query"] = user_input.strip()
-            st.rerun(scope="fragment")
 
-    st.markdown("<div style='font-size: 10px; color: #94A3B8; margin-top: -6px; margin-bottom: 8px;'>Educational explanation, not investment advice.</div>", unsafe_allow_html=True)
+    st.markdown("<div style='font-size: 11px; color: #A5B4FC; margin-top: 2px; margin-bottom: 8px;'>Educational explanation, not investment advice.</div>", unsafe_allow_html=True)
 
     # Process pending query if triggered
     if st.session_state["ask_pending_query"]:
         q_text = st.session_state["ask_pending_query"]
         st.session_state["ask_pending_query"] = None
 
+        if "ask_answer_cache" not in st.session_state:
+            st.session_state["ask_answer_cache"] = {}
+        cache_key = q_text.strip().lower()
         with st.spinner("Checking numbers against your SIP data..."):
-            is_expl = any(k in q_text.lower() for k in ["explain", "lower", "higher", "different", "why", "kyun"])
-            res = process_question_pipeline(q_text, data, is_explanation=is_expl)
+            is_expl = any(
+                k in q_text.lower()
+                for k in ["explain", "lower", "higher", "different", "why", "kyun", "graph", "learn", "understand", "dip", "money gone"]
+            )
+            res = st.session_state["ask_answer_cache"].get(cache_key)
+            if res is None:
+                res = process_question_pipeline(
+                    q_text, data, is_explanation=is_expl, use_llm_judge=False
+                )
+                st.session_state["ask_answer_cache"][cache_key] = res
             chips = extract_data_chips(res["answer"], data)
 
             entry = {
@@ -829,10 +1023,10 @@ def render_ask_card_fragment(data: dict):
     if history:
         latest = history[-1]
 
-        # User Question Bubble
+        # User question, same indigo chip treatment as the quiz options
         st.markdown(f"""
-        <div style="background-color: #F1F5F9; border-radius: 12px; padding: 10px 14px; margin-top: 6px; margin-bottom: 10px; color: #0F172A; font-weight: 600; font-size: 12px;">
-            👤 {latest['question']}
+        <div style="background:#2A2768; border:1px solid rgba(165,180,252,0.38); border-radius:12px; padding:10px 14px; margin-top:8px; margin-bottom:10px; color:#E0E7FF; font-weight:600; font-size:12px;">
+            👤 {html.escape(latest['question'])}
         </div>
         """, unsafe_allow_html=True)
 
@@ -840,37 +1034,29 @@ def render_ask_card_fragment(data: dict):
         if latest["route"] == "answer":
             if latest["fallback_used"]:
                 st.markdown("""
-                <div style="background-color: #FEF3C7; border: 1px solid #FDE68A; border-radius: 10px; padding: 8px 12px; font-size: 11px; color: #92400E; margin-bottom: 8px;">
+                <div style="background:#2A2768; border:1px solid rgba(165,180,252,0.38); border-radius:12px; padding:8px 12px; font-size:11px; color:#E0E7FF; margin-bottom:8px;">
                     We couldn't verify the generated answer, so here is our standard explanation.
                 </div>
                 """, unsafe_allow_html=True)
 
-            chips_html = "".join([f"<span class='pill-neutral' style='font-size: 10px; margin-right: 4px;'>{c}</span>" for c in latest["chips"]])
-            st.markdown(f"""
-            <div style="background-color: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 12px; padding: 14px; margin-bottom: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.02);">
-                <div style="font-size: 12px; color: #1E293B; line-height: 1.5; margin-bottom: 8px;">
-                    {latest['answer']}
-                </div>
-                <div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px;">
-                    {chips_html}
-                </div>
-                <div style="display: flex; justify-content: space-between; align-items: center; border-top: 1px solid #F1F5F9; padding-top: 6px;">
-                    <span style="font-size: 11px; font-weight: 600; color: #00796B;">✔ {latest['badge']}</span>
-                    <span class="pill-neutral" style="font-size: 9px;">AI-generated explanation</span>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-
-            with st.expander("How this was checked ▾"):
-                st.markdown(r"""
-                - **Check 1**: Valid JSON schema & route classification
-                - **Check 2**: Zero bare digits outside `{placeholders}`
-                - **Check 3**: All cited numbers match computed scenario data
-                - **Check 4**: Zero financial advice phrases
-                - **Check 5**: Zero panic / urgency wording
-                - **Check 6**: Readability bounded (sentence $\le 22$ words, answer $\le 110$ words)
-                - **Check 7**: Semantic relation verified by judge
-                """)
+            chip_style = (
+                "display:inline-block; margin:0 4px 4px 0; background:rgba(255,255,255,0.08); "
+                "color:#E0E7FF; border:1px solid rgba(165,180,252,0.35); border-radius:999px; "
+                "padding:3px 8px; font-size:10px;"
+            )
+            chips_html = "".join(
+                f"<span style='{chip_style}'>{html.escape(c)}</span>" for c in latest["chips"]
+            )
+            answer_body = (
+                f'<div style="margin-bottom:8px;">{_ask_body_html(latest["answer"])}</div>'
+                f'<div style="margin-bottom:8px;">{chips_html}</div>'
+                '<div style="display:flex; justify-content:space-between; align-items:center; gap:8px; '
+                'border-top:1px solid rgba(165,180,252,0.25); padding-top:8px;">'
+                f'<span style="font-size:11px; font-weight:600; color:#5EEAD4;">✔ {html.escape(latest["badge"])}</span>'
+                f'<span style="font-size:10px; font-weight:700; color:#C4B5FD;">{"AI-generated explanation" if latest["is_ai"] else "Verified from your SIP data"}</span>'
+                "</div>"
+            )
+            st.markdown(_ask_panel("", "", answer_body), unsafe_allow_html=True)
 
             # Thumbs feedback & follow-up chips
             fb1, fb2, fb3 = st.columns([0.15, 0.15, 0.7])
@@ -883,7 +1069,7 @@ def render_ask_card_fragment(data: dict):
             with fb3:
                 pass
 
-            st.markdown("<div style='font-size: 11px; font-weight: 700; color: #64748B; margin-top: 4px; margin-bottom: 4px;'>Suggested Follow-ups:</div>", unsafe_allow_html=True)
+            st.markdown("<div style='font-size: 11px; font-weight: 700; color: #C7D2FE; margin-top: 4px; margin-bottom: 4px;'>Suggested Follow-ups:</div>", unsafe_allow_html=True)
             fu_c1, fu_c2 = st.columns(2)
             with fu_c1:
                 if st.button("Why more units last month?", key=f"fu_units_{latest['id']}", use_container_width=True):
@@ -896,56 +1082,47 @@ def render_ask_card_fragment(data: dict):
 
         # State 2: Advice Declined
         elif latest["route"] == "decline_advice":
-            st.markdown(f"""
-            <div style="background-color: #EEF2FF; border: 1px solid #C7D2FE; border-radius: 12px; padding: 14px; margin-bottom: 8px; color: #1E1B4B;">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                    <span style="font-weight: 700; font-size: 12px; color: #4F46E5;">Regulated Response</span>
-                    <span class="pill-indigo" style="font-size: 9px;">Not answered: investment advice</span>
-                </div>
-                <div style="font-size: 12px; line-height: 1.5; color: #312E81;">
-                    {latest['answer'].replace(chr(10), '<br>')}
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+            st.markdown(
+                _ask_panel(
+                    "Regulated Response",
+                    "Not answered: investment advice",
+                    _ask_body_html(latest["answer"]),
+                ),
+                unsafe_allow_html=True,
+            )
 
         # State 3: Prediction Declined
         elif latest["route"] == "decline_prediction":
-            st.markdown(f"""
-            <div style="background-color: #F8FAFC; border: 1px solid #CBD5E1; border-radius: 12px; padding: 14px; margin-bottom: 8px; color: #334155;">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                    <span style="font-weight: 700; font-size: 12px; color: #475569;">Market Principles</span>
-                    <span class="pill-neutral" style="font-size: 9px;">Not answered: price prediction</span>
-                </div>
-                <div style="font-size: 12px; line-height: 1.5; color: #334155;">
-                    {latest['answer']}
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+            st.markdown(
+                _ask_panel(
+                    "Market Principles",
+                    "Not answered: price prediction",
+                    _ask_body_html(latest["answer"]),
+                ),
+                unsafe_allow_html=True,
+            )
 
         # State 4: Not Sure
         elif latest["route"] == "not_sure":
-            st.markdown(f"""
-            <div style="background-color: #F8FAFC; border: 1px solid #CBD5E1; border-radius: 12px; padding: 14px; margin-bottom: 8px; color: #475569;">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                    <span style="font-weight: 700; font-size: 12px; color: #64748B;">Data Boundary</span>
-                    <span class="pill-neutral" style="font-size: 9px;">Not in your SIP data</span>
-                </div>
-                <div style="font-size: 12px; line-height: 1.5; color: #334155;">
-                    {latest['answer']}
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+            st.markdown(
+                _ask_panel(
+                    "Data Boundary",
+                    "Not in your SIP data",
+                    _ask_body_html(latest["answer"]),
+                ),
+                unsafe_allow_html=True,
+            )
 
         # State 5: Off-topic Redirect
         elif latest["route"] == "redirect_offtopic":
-            st.markdown(f"""
-            <div style="background-color: #F8FAFC; border: 1px solid #CBD5E1; border-radius: 12px; padding: 12px; margin-bottom: 8px;">
-                <div style="font-size: 12px; color: #475569; margin-bottom: 6px;">
-                    {latest['answer']}
-                </div>
-                <span class="pill-neutral" style="font-size: 9px;">Off-topic redirect</span>
-            </div>
-            """, unsafe_allow_html=True)
+            st.markdown(
+                _ask_panel(
+                    "",
+                    "Off-topic redirect",
+                    _ask_body_html(latest["answer"]),
+                ),
+                unsafe_allow_html=True,
+            )
             of1, of2 = st.columns(2)
             with of1:
                 if st.button("Why is SIP lower?", key=f"of_why_{latest['id']}", use_container_width=True):
@@ -961,7 +1138,7 @@ def render_ask_card_fragment(data: dict):
             with st.expander(f"Earlier questions ({len(history) - 1})"):
                 for idx, prev in enumerate(reversed(history[:-1])):
                     st.markdown(f"**Q: {prev['question']}**")
-                    st.markdown(f"<div style='font-size: 11px; color: #475569; margin-bottom: 6px;'>{prev['answer'][:120]}...</div>", unsafe_allow_html=True)
+                    st.markdown(f"<div style='font-size: 11px; color: #C7D2FE; margin-bottom: 6px;'>{html.escape(prev['answer'][:120])}...</div>", unsafe_allow_html=True)
                     st.markdown("<hr style='margin: 4px 0 8px 0;'>", unsafe_allow_html=True)
 
 
@@ -970,16 +1147,10 @@ def render_ask_card_fragment(data: dict):
 # =============================================================================
 def render_screen_my_investment():
     render_top_header("My Investment Analysis", "Axis Bluechip Fund", show_back=True, fallback_back="sip_overview")
+    st.markdown("<span class='pill-neutral' style='margin-bottom: 10px;'>Direct · Growth</span>", unsafe_allow_html=True)
     render_segmented_toggle("my_investment")
 
-    # Tester Mode Selector
-    sc_keys = list(SCENARIOS.keys())
-    selected_sc = st.selectbox(
-        "Tester mode: try another sample SIP (this screen only)",
-        sc_keys,
-        index=sc_keys.index(st.session_state.get("selected_scenario", "base")),
-        key="tester_mode_dropdown"
-    )
+    selected_sc = "base"
     st.session_state["selected_scenario"] = selected_sc
 
     # Compute data for active scenario
@@ -987,16 +1158,27 @@ def render_screen_my_investment():
     active_monthly = SCENARIOS[selected_sc]["monthly"]
     data = compute_sip(active_monthly, active_navs, scenario_name=selected_sc)
 
-    # 1. SMART DIGEST GENERATION / RETRIEVAL
-    mode = st.session_state.get("ai_vs_standard", "AI")
-    
-    # Session Caching for Smart Digest
-    if selected_sc not in st.session_state["smart_digest_cache"]:
+    # 1. SMART DIGEST. The screen always opens on the verified template.
+    # The model runs only after the user asks for the AI explanation.
+    mode = st.session_state.get("ai_vs_standard", "Standard")
+    if mode == "AI" and selected_sc not in st.session_state["smart_digest_cache"]:
         with st.spinner("Generating verified Smart Digest..."):
-            digest_data = generate_smart_digest_pipeline(data)
+            try:
+                digest_data = generate_smart_digest_pipeline(data)
+            except Exception:
+                standard_text = get_standard_digest_template(data)
+                digest_data = {
+                    "is_ai": False,
+                    "badge": "Standard explanation (not AI-generated)",
+                    "what_happened": standard_text["what_happened"],
+                    "what_explains": standard_text["what_explains"],
+                    "what_to_understand": standard_text["what_to_understand"],
+                    "missing_key": True,
+                    "latency_ms": 0,
+                }
             st.session_state["smart_digest_cache"][selected_sc] = digest_data
 
-    cached_digest = st.session_state["smart_digest_cache"][selected_sc]
+    cached_digest = st.session_state["smart_digest_cache"].get(selected_sc)
 
     # Swap between AI and Standard if toggled
     if mode == "Standard":
@@ -1011,7 +1193,7 @@ def render_screen_my_investment():
         display_what_explains = cached_digest["what_explains"]
         display_what_to_understand = cached_digest["what_to_understand"]
         digest_badge = cached_digest["badge"]
-        digest_tag = "• AI explanation"
+        digest_tag = "• AI explanation" if cached_digest.get("is_ai") else "Standard template"
 
     st.markdown(f"""
     <div class="mint-card">
@@ -1049,10 +1231,17 @@ def render_screen_my_investment():
     </div>
     """, unsafe_allow_html=True)
 
+    if cached_digest and cached_digest.get("missing_key") and mode != "Standard":
+        st.markdown("""
+        <div class="yellow-card" style="font-size: 12px; color: #78350F; line-height: 1.45;">
+            Live AI is off because this deployment has no Groq key. The numbers and the explanation above are still calculated from your SIP.
+            To turn AI on, open the Streamlit app settings, add <b>GROQ_API_KEY</b> under Secrets, and reboot the app.
+        </div>
+        """, unsafe_allow_html=True)
+
     # 2. INLINE ASK ABOUT YOUR SIP CARD (st.fragment)
-    st.markdown("<div class='mobile-card' style='padding: 14px;'>", unsafe_allow_html=True)
-    render_ask_card_fragment(data)
-    st.markdown("</div>", unsafe_allow_html=True)
+    with st.container(border=True, key="ask_sip_card"):
+        render_ask_card_fragment(data)
 
     # 3. STAT CARDS (2x2 Grid)
     diff_class = "loss-red" if data['diff'] < 0 else "gain-green"
@@ -1233,7 +1422,11 @@ def render_screen_my_investment():
 
     with st.expander("3. Understanding XIRR"):
         if data["n_instalments"] < 12:
-            st.write("XIRR is an annualised return metric. An annualised number is shown only after 12 months because annualising a short holding period can produce extreme, misleading figures. Your personal return is shown as absolute difference (-12.14%).")
+            st.write(
+                "XIRR is an annualised return metric. An annualised number is shown only after 12 months "
+                "because annualising a short holding period can produce extreme, misleading figures. "
+                f"Your personal return is shown as an absolute difference ({data['formatted']['return_pct']})."
+            )
         else:
             st.write(f"For portfolios completing 12 or more instalments, annualised XIRR accounts for the exact dates of each contribution.")
 
@@ -1273,16 +1466,17 @@ def render_screen_my_investment():
 
     with st.expander("What AI adds vs a standard explanation"):
         st.write("A fixed template only covers pre-scripted conditions. Generative AI allows explanations to adapt dynamically to unique deposit histories, volatile fluctuations, and free-form investor questions while maintaining 100% mathematical precision via code placeholders.")
-        chosen_mode = st.radio(
+        def _set_digest_mode():
+            chosen = st.session_state.get("toggle_digest_mode_radio", "Standard Template")
+            st.session_state["ai_vs_standard"] = "AI" if chosen == "AI Explanation" else "Standard"
+
+        st.radio(
             "Toggle explanation mode for Smart Digest:",
             ["AI Explanation", "Standard Template"],
-            index=0 if st.session_state.get("ai_vs_standard", "AI") == "AI" else 1,
-            key="toggle_digest_mode_radio"
+            index=0 if st.session_state.get("ai_vs_standard", "Standard") == "AI" else 1,
+            key="toggle_digest_mode_radio",
+            on_change=_set_digest_mode,
         )
-        new_mode = "AI" if chosen_mode == "AI Explanation" else "Standard"
-        if new_mode != st.session_state.get("ai_vs_standard", "AI"):
-            st.session_state["ai_vs_standard"] = new_mode
-            st.rerun()
 
 
 # =============================================================================
@@ -1541,11 +1735,9 @@ def render_screen_fund_history():
     # Action Buttons
     c_btn1, c_btn2 = st.columns(2)
     with c_btn1:
-        if st.button("← Back to My SIPs", key="fhist_to_sips", use_container_width=True):
-            navigate_to("my_sips")
+        st.button("← Back to My SIPs", key="fhist_to_sips", use_container_width=True, on_click=navigate_to("my_sips"))
     with c_btn2:
-        if st.button("Review SIP Overview →", key="fhist_to_overview", use_container_width=True):
-            navigate_to("sip_overview")
+        st.button("Review SIP Overview →", key="fhist_to_overview", use_container_width=True, on_click=navigate_to("sip_overview"))
 
 
 # =============================================================================
