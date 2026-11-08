@@ -612,7 +612,6 @@ def render_screen_home():
         </div>
         """, unsafe_allow_html=True)
 
-    st.button("Explore Parag Parikh SIP →", key="btn_home_pp", use_container_width=True, on_click=navigate_to("my_sips"))
 
 
 # =============================================================================
@@ -629,7 +628,7 @@ def render_screen_my_sips():
             <span style="font-size: 14px; font-weight: 700; color: #064E3B;">Fund Performance Explainer</span>
         </div>
         <div style="font-size: 12px; color: #064E3B; line-height: 1.45;">
-            Confused by red or green numbers? Tap any SIP below to see plain-English explanations of your returns vs fund history.
+            Confused by red or green numbers? Open Axis Bluechip for a plain-English explanation of your return.
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -638,7 +637,7 @@ def render_screen_my_sips():
     st.markdown("""
     <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px;">
         <span style="font-size: 12px; font-weight: 700; color: #64748B;">ACTIVE SIP INVESTMENTS (2)</span>
-        <span class="pill-neutral">Tap to explore</span>
+        <span class="pill-neutral">Axis Bluechip opens</span>
     </div>
     """, unsafe_allow_html=True)
 
@@ -709,9 +708,6 @@ def render_screen_my_sips():
         </div>
     </div>
     """, unsafe_allow_html=True)
-
-    if st.button("ℹ See how your SIP works. Explain >", key="btn_explain_pp", use_container_width=True):
-        st.info("Detailed analysis is available for Axis Bluechip in this MVP.")
 
     st.markdown("""
     <div style="font-size: 11px; color: #64748B; text-align: center; margin-top: 12px;">
