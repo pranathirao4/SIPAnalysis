@@ -1,0 +1,135 @@
+Plan first, then build in stages and test after each stage. Do not write code until I approve the plan.
+
+PROJECT
+A deployed, AI-native MVP for first-time mutual fund SIP investors (Groww case study): "SIP Explainer". It explains in plain English why a user's SIP value can sit below their invested amount even when the fund itself is only slightly down. Five screens, matching the images in /design (Home, My SIPs, SIP Overview, My Investment Analysis, Fund History): match layout, colours and copy as closely as practical. Flow: Home -> My SIPs -> SIP Overview -> My Investment Analysis <-> Fund History (toggle).
+
+WHERE THE AI LIVES
+- Live AI exists ONLY on My Investment Analysis: (1) the generated Smart Digest and (2) the inline "Ask about your SIP" card. Both go through the eval gate described below.
+- Every other screen, including Fund History, is static (pre-written text and sample data, no AI calls). The Fund History "Ask about this fund" card is a disabled preview with a grey "Coming soon" pill. No "AI explanation" tag or "Numbers verified" badge anywhere on Fund History.
+
+HARD CONSTRAINTS (enforced in code, not only in prompts)
+- Never recommend specific funds or stocks. No investment advice of any kind (no should / buy / sell / hold / switch / stop / continue recommendations). No fear, FOMO or urgency wording. No predictions of future prices or returns. No fund ratings (no CRISIL badge).
+- "Educational explanation, not investment advice." is visible on every analysis screen, in the Ask card and in the footer.
+- Red is used only on loss figures themselves. Strips, buttons and charts use neutral blue and grey.
+
+STACK AND PERFORMANCE
+- Python + Streamlit with custom CSS, mobile width about 420px centred, no Streamlit chrome visible. Single-file router using st.session_state["screen"] with a custom fixed bottom navigation (Home, My SIPs only). Back arrows return to the previous screen. Avoid full-page flicker: run the Ask card inside st.fragment so asking a question does not rerun the whole page, cache computed values with st.cache_data, and generate the Smart Digest once per scenario and cache it for the session (show a skeleton while it loads, never a different screen).
+- Groq API with a strong instruct model (check Groq's current model list and pick a Llama 3.3 70B-class model). Key in Streamlit secrets or .env, never in code or chat.
+- Files: app.py, core/compute.py, core/llm.py, core/gate.py, core/templates.py, core/static_data.py, golden_set.json, eval.py, eval_results.json, logs/, README.md, requirements.txt. Deploy to Streamlit Community Cloud.
+
+CORE PRINCIPLE: NUMBERS COME FROM CODE, THE AI ONLY WRITES WORDS
+1. core/compute.py takes monthly_amount and a list of instalment NAVs (the last NAV is today's NAV) and returns: invested, units_total, units_per_instalment, avg_cost, nav_start, nav_now, value, diff, return_pct, fund_return_pct, month_end_values and month_end_invested (for charts), gap per month, month with most units, highest and lowest instalment NAV, and a relation flag (sip_lower / sip_higher / equal comparing return_pct with fund_return_pct). Format with Indian digit grouping and the rupee sign; percentages to 2 decimals; units to 2 decimals.
+2. The LLM only receives these values as JSON and writes using placeholders like {invested}, {value}, {diff}, {return_pct}, {fund_return_pct}, {avg_cost}, {nav_now}, {nav_start}, {units_total}, {n_instalments}, {monthly}, {units_prev}, {units_last}, {nav_last}, {nav_low_range}, {nav_high_range}. Code fills placeholders after validation. Any digit written outside a placeholder is a validation failure.
+
+DATA
+- Axis Bluechip Fund (icon "AB"): computed by compute() from the active scenario. Default scenario "base": monthly ₹2,000, NAVs 48.50, 52.00, 54.00, 55.00, 53.95, 50.00, 44.75 (May to Nov 2023). It must produce: invested ₹14,000; units 274.86; avg cost ₹50.93; value ₹12,300; diff -₹1,700 (-12.14%); fund NAV 48.50 to 44.75 = -7.73%. Last instalment 5 Nov, next 5 Dec, valued 6 Nov 2023.
+- Parag Parikh Flexi Cap Fund (icon "PP"): static constants only: ₹3,000/month, 7 instalments, invested ₹21,000, value ₹23,100, +₹2,100 (+10.0%).
+- Home totals are computed from the two funds: for base, invested ₹35,000, value ₹35,400, +₹400 (+1.14%), 2 active SIPs, monthly SIP ₹5,000, next investment ₹5,000 on 5 Dec.
+- 10 scenarios (base, rising, flat, falling, v_shape, three_instalments, small_sip, large_sip, volatile, twelve_instalments) come from golden_set.json ("scenarios" block). A small "Tester mode: try another sample SIP" selector sits only on My Investment Analysis and changes only the Axis data on that screen. All other screens always show the base data so the demo path stays consistent; say this in the README.
+- Write unit tests comparing compute() output with the "expected" values in golden_set.json (±₹1 on rupee amounts) and checking the Home totals. If anything mismatches, report it and stop; do not edit golden_set.json yourself.
+
+SHARED UI
+- Top bar: title and grey subtitle, "?" icon, green avatar "RS". Back arrow except on Home.
+- Bottom nav: Home and My SIPs only (active item green). SIP Overview, My Investment Analysis and Fund History are reached from inside My SIPs; keep My SIPs highlighted on them.
+- Colours: page #F5F7FA, white cards with light border and soft shadow, primary green #00B386 / dark green #00796B, mint tint #E6F8F3, chart value blue #2F5BEA, chart invested grey #8A94A6, indigo #4F46E5 accent, yellow info card #FFF8E1, navy quiz card #1E1B4B, loss red #E5484D, gain green #00B386.
+
+SCREEN 1: HOME
+- Top: "Hello!" bold with grey line "Here's how your SIPs are doing" (plain text, not a link), help icon, avatar. No empty gap above the portfolio card.
+- Dark green gradient portfolio card: "TOTAL PORTFOLIO VALUE", value, pill "+₹400 (+1.14%) overall", divider, three columns Invested | Active SIPs | Monthly SIP.
+- "THIS MONTH" with green "View SIPs >" link; card "Next investment ₹5,000 on 5 Dec, across 2 active SIPs" with chevron (opens My SIPs).
+- "YOUR FUNDS": two rows (AB with ₹12,300 and -12.14% in red; PP with ₹23,100 and +10.00% in green), each opens My SIPs. No other cards.
+
+SCREEN 2: MY SIPs
+- Mint card "Fund Performance Explainer": "Confused by red or green numbers? Tap any SIP below to see plain-English explanations of your returns vs fund history."
+- "ACTIVE SIP INVESTMENTS (2)" with a one-line "Tap to explore" pill.
+- Each SIP card: icon, name, monthly amount, green "Active SIP" tag, "Last instalment 5 Nov ✓ · Next 5 Dec", pill with difference (red or green), "Unrealised difference/gain", Total Invested (7 mos), Current Portfolio Value, and a NEUTRAL light blue-grey strip "See how your SIP works. Explain >". Tapping the card or the strip opens SIP Overview for that fund (Axis fully built; Parag Parikh opens the same layout with its static numbers and a note "Detailed analysis is available for Axis Bluechip in this MVP").
+- Grey info line: "Your return can differ from the fund's return because you invest every month."
+
+SCREEN 3: SIP OVERVIEW
+- Header: back arrow, "SIP Overview", fund dropdown (Axis Bluechip). No duplicate "Switch" button.
+- Summary card: "Monthly SIP: ₹2,000 • 7 instalments"; 2x2 grid Total Invested | Current Portfolio Value | Absolute Difference (red only on the number) | Return Percentage (red only on the number). Below: "Your 7-Month SIP Growth Curve" chart (invested grey, value blue, light shaded gap, M1 to M7, ₹0 to ₹16k, dashed gridlines) with the label "7 monthly deposits".
+- Yellow info card directly under it: "Why can your return differ from the fund's return? A fund's return over a period assumes one lump sum on day 1. Your SIP bought units 7 separate times at 7 different prices, so your return can differ. Here, the fund is down 7.73% while your SIP is down 12.14%." (numbers filled from compute()).
+- "CHOOSE WHAT YOU WANT TO UNDERSTAND" with grey helper text. Card 1 (indigo, pill "Your Personal Money") "1. Analyse My Investment: Understand how your actual cash contributions performed based on your deposit dates, 7 monthly instalments and annualised return." Button "Open Analysis →" opens My Investment Analysis. Card 2 (green, pill "Fund NAV History") "2. Understand Fund History: Examine how this mutual fund behaved since you started and across 1Y, 3Y and 5Y market cycles, completely separate from when you invested." Button "Open History →" opens Fund History.
+- Grey line "Educational explanation, not investment advice."
+
+SCREEN 4: MY INVESTMENT ANALYSIS (THE AI SCREEN)
+Top to bottom:
+1. Header: back arrow, "My Investment Analysis", subtitle "Axis Bluechip Fund", small chip "Direct · Growth". Under it the toggle "My Investment | Fund History" (My Investment active); tapping Fund History opens that screen with the toggle in the identical position.
+2. Small tester selector "Tester mode: try another sample SIP (this screen only)".
+3. Smart Digest (mint card, tag "AI explanation"): What happened / What explains the observed movement / What should the investor understand (the third part says a difference only becomes a gain or loss when units are sold). Generated through the gate. Badge "Numbers verified against your SIP data". If the gate fails twice show the standard template digest with the badge "Standard explanation (not AI-generated)". Wording adapts to the scenario: loss, gain, no change, SIP better or worse than the fund. Small shield note "Mutual fund values fluctuate daily with market conditions."
+4. "Ask about your SIP" card, inline, no separate chat page, header with chat icon and mint pill "AI ASSISTANT". Chips: "Why is my SIP lower than the fund?", "What does average cost mean?", "Is my money gone?". Input "Ask in your own words" with a green send button; footer "Educational explanation, not investment advice." The card starts EMPTY (no sample answers). States inside the same card, growing taller:
+   - Checking: user bubble plus "Checking numbers against your SIP data..." with animated dots.
+   - Answered: user bubble, answer block, neutral chips for data used (for example "Invested ₹14,000", "Avg cost ₹50.93", "NAV ₹44.75"), badge "Numbers verified against your SIP data", link "How this was checked ▾" (expands inline to the five checks and the fallback rule), thumbs up/down, label "AI-generated explanation", two follow-up chips.
+   - Advice declined: soft indigo-bordered block, calm wording, the user's numbers restated, three official-source rows (Groww Help Centre, AMFI investor education, SEBI investor website; verify URLs before deploying). Label "Not answered: investment advice".
+   - Prediction declined ("will it recover", "will I lose everything"): calm block saying future prices cannot be predicted, units are unchanged and value moves with NAV.
+   - Not sure: grey-bordered block "I'm not sure from the data here" with a pointer to the official scheme factsheet. Label "Not in your SIP data".
+   - Off-topic: one-line redirect plus two SIP chips.
+   - Fallback: calm amber notice "We couldn't verify the generated answer, so here is our standard explanation." plus the template answer, badge "Standard explanation (not AI-generated)".
+   Keep only the latest exchange expanded; earlier ones collapse under "Earlier questions". No red in this card.
+5. Chart "Your SIP so far": invested grey solid line, value blue solid line, shaded gap (light blue above, light grey hatch below), axes with ₹ values and M1..Mn with month names, dots at the first, the highest-gap and the last month, end labels and a bracket "₹X below/above invested". Below it a small bar chart "Value minus invested" (blue above zero, grey below). Note: "Month N (NAV ₹x): your ₹2,000 bought y units, the most of any month so far." Plotly or Altair, mobile friendly.
+6. Stat cards 2x2: Total Invested | Current Value ("units × NAV") | Total Difference (red only if negative, with "% absolute") | "Avg cost vs current NAV".
+7. Timeline Breakdown: for the base user two rows (Months 1-4: NAV rose from ₹48.50 to ₹55.00 (+13.4%), invested ₹8,000, value ₹8,420, badge "Your value +5.25%"; Months 5-7: NAV fell from ₹55.00 to ₹44.75 (-18.6%), invested ₹14,000, value ₹12,300, badge "Your value -12.14%"). For other scenarios use a compact table (Month | NAV | Units bought | Value vs invested %), highlighting the month with the most units.
+8. Investor Fundamentals: 5 collapsed expanders (Invested vs current value, Unrealised vs realised, XIRR, NAV fluctuations and unit accumulation, Personal SIP return vs fund return) with template text and computed values. XIRR text: an annualised number is shown only after 12 months because annualising a short period can mislead; never show an XIRR figure for fewer than 12 instalments.
+9. Core Takeaway (green): "Market movements naturally create phases where portfolio value sits above or below total contributions. Regular SIP investing focuses on accumulating units across varied market cycles without timing price levels."
+10. Expander "How we check this" (the five checks, the fallback rule, the latest eval table from eval_results.json) and expander "What AI adds vs a standard explanation" with an AI | Standard switch that swaps the Smart Digest between the AI version and the fixed template.
+11. Footer: "Educational explanation, not investment advice. Mutual fund investments are subject to market risks. Read all scheme related documents carefully." No "Manage SIP" or "Download Statement".
+12. Evidence_log or Golden set is save in Evidence log folder
+
+SCREEN 5: FUND HISTORY (STATIC, NO AI)
+- Header "Fund Historical Performance", subtitle "Axis Bluechip Fund", the same toggle (Fund History active). Intro mint card "FUND-LEVEL HISTORICAL NAV / Axis Bluechip Fund History / Analysing the mutual fund's unit price (NAV) across market cycles, completely independent of your personal instalment dates." No CRISIL badge.
+- Chips: "Since you started (7M)", "1Y", "3Y", "5Y", all enabled, default "Since you started (7M)". Chart line in green with gradient fill, ₹ y-axis labels, date x labels, peak ₹55.00 highlighted, labels never overlapping the axis or line, note "Sample data for illustration". Two buttons "Top Growth Section" and "Top Decline Section" that highlight the matching window. Grey tip "Interactive Graph Inspector: Tap any point or use the buttons above to see how NAV reacted during specific periods."
+- Summary card "FUND HISTORY SUMMARY" (plain text only, no AI tag, no "verified" badge).
+- Disabled "Ask about this fund" preview card with a grey "Coming soon" pill, muted chips ("Why did NAV fall from Aug to Nov?", "What is drawdown?", "Does a falling NAV mean the fund is failing?") and a muted input; line "Available on My Investment Analysis. Coming here next."
+- HISTORICAL BEHAVIOUR PATTERNS (rally row, correction row, no causes stated; use "Market prices moved up and down during this period."). FUND KEY STATISTICS 2x3 grid (Starting NAV, Current NAV, Period Return, Maximum Drawdown, Benchmark Nifty 50 (sample data), Risk Category "Very High" in orange). LEARN TO READ THIS GRAPH ("What is NAV?" and "Does a falling NAV graph mean the fund is failing?" with "No. Markets fluctuate regularly due to economic cycles. A lower NAV lets your fixed monthly SIP buy more units, but it does not guarantee prices will recover.").
+- Quiz card (navy), working: "A fund's NAV is down about 8% since you started, but your SIP is down about 12%. Why can this happen?" A) The fund charged a hidden penalty B) Most of your instalments were bought at higher NAVs than the starting NAV (correct) C) SIP returns are always lower than fund returns. Answered state: chosen option highlighted, explanation "Your SIP bought units at 7 different prices, mostly higher than the starting NAV, so its return can differ from the fund's."
+- "WHAT HAVE I LEARNED ABOUT THIS FUND?" with three bullets ending "Key Rule: Historical performance is useful for understanding past fund behaviour, but it does NOT guarantee future returns." Buttons "← Back to My SIPs" and "Review SIP Overview →". Footer disclaimer.
+- Static data per chip (current NAV ₹44.75 in all):
+  A) Since you started (7M): x May, Aug, Nov; y ₹44, ₹50, ₹56; anchors 48.50, 55.00, 44.75. Buttons "+13.4% rally (May to Aug)" / "-18.6% dip (Aug to Nov)". Summary "Since you started in May, Axis Bluechip's NAV moved from ₹48.50 to ₹44.75 (-7.73%). It rose to ₹55.00 in August, then fell to ₹44.75 by November." plus "Your SIP return (-12.14%) is lower than the fund's (-7.73%) because most of your instalments (June to October) were bought at NAVs between ₹50.00 and ₹55.00, higher than the NAV when you started and higher than today's ₹44.75." Patterns "+13.4% in 3 months, May to Aug, ₹48.50 to ₹55.00" and "-18.6% in 3 months, Aug to Nov, ₹55.00 to ₹44.75". Stats: ₹48.50, ₹44.75, -7.73%, -18.6%, Nifty 50 (sample) -3.5%.
+  B) 1Y: x Nov'22, May'23, Nov'23; y ₹40, ₹50, ₹60; anchors Nov'22 46.00, Feb'23 49.50, May'23 48.50, Aug'23 55.00, Nov'23 44.75. Buttons "+19.6% rally (Nov'22 to Aug'23)" / "-18.6% dip (Aug to Nov'23)". Summary "Over the last year, Axis Bluechip's NAV moved from ₹46.00 to ₹44.75 (-2.72%). It rose to ₹55.00 in August, then fell back to ₹44.75 by November. This view is about the fund only. It does not depend on when you invested." Patterns "+19.6% in 9 months" / "-18.6% in 3 months". Stats: ₹46.00, ₹44.75, -2.72%, -18.6%, Nifty 50 (sample) +2.0%.
+  C) 3Y: x Nov'20, Nov'21, Nov'22, Nov'23; y ₹25, ₹40, ₹55; anchors Nov'20 30.00, Nov'21 42.00, Jun'22 38.00, Nov'22 46.00, Aug'23 55.00, Nov'23 44.75. Buttons "+40.0% rally (Nov'20 to Nov'21)" / "-18.6% dip (Aug to Nov'23)". Summary "Over three years, NAV moved from ₹30.00 to ₹44.75 (+49.17%, about 14.3% a year). The path was uneven: it rose through 2021, dipped in mid-2022 and peaked at ₹55.00 in August 2023 before the latest fall. This view is about the fund only." Patterns "+40.0% in 12 months, Nov'20 to Nov'21, ₹30.00 to ₹42.00" / "-18.6% in 3 months". Stats: ₹30.00, ₹44.75, +49.17% (sub-label "about 14.3% a year"), -18.6%, Nifty 50 (sample) +55.0%.
+  D) 5Y: x Nov'18, Nov'20, Nov'22, Nov'23; y ₹20, ₹40, ₹60; anchors Nov'18 33.00, Mar'20 22.00, Nov'20 30.00, Nov'21 42.00, Jun'22 38.00, Nov'22 46.00, Aug'23 55.00, Nov'23 44.75. Buttons "+90.9% rally (Mar'20 to Nov'21)" / "-33.3% dip (Nov'18 to Mar'20)". Summary "Over five years, NAV moved from ₹33.00 to ₹44.75 (+35.61%, about 6.3% a year). It fell to ₹22.00 in March 2020, rose to ₹55.00 by August 2023, and has declined since. Past movements do not predict future returns. This view is about the fund only." Patterns "+90.9% in 20 months, Mar'20 to Nov'21, ₹22.00 to ₹42.00" / "-33.3% in 16 months, Nov'18 to Mar'20, ₹33.00 to ₹22.00". Stats: ₹33.00, ₹44.75, +35.61% (sub-label "about 6.3% a year"), -33.3%, Nifty 50 (sample) +48.0%.
+  Keep this data in core/static_data.py. Fund History always shows base data regardless of tester mode.
+
+AI FEATURE: ONE LLM CALL PER QUESTION
+- Input: computed JSON, the question, a short glossary (NAV, units, average cost, unrealised vs realised, XIRR, rupee-cost averaging, point-to-point return).
+- Output: strict JSON {"route": "answer | decline_advice | decline_prediction | redirect_offtopic | not_sure", "answer": "..."}. Temperature 0.2.
+- System prompt rules: plain English at about grade 8 (simple Hinglish in Roman script if the question is in Hinglish); max 110 words; calm, neutral tone; only placeholders for numbers; state the direction of the difference correctly (gain, loss or none) and whether the SIP did better or worse than the fund over the same period and why (units bought at different NAVs); say a difference only becomes a gain or loss when units are sold when relevant; never say what the user should do; never mention any other fund or stock; no causes of market moves; no predictions.
+- Only route "answer" uses generated text. For every other route IGNORE the model's text and return a fixed template from core/templates.py filled with computed values. Add a regex backstop on the question for obvious advice and prediction phrases (should I, stop my SIP, sell, buy, which fund, better than, will it recover, will I lose); if it fires, force the decline template regardless of the router.
+- The Smart Digest uses the same pipeline with a fixed "explain my SIP in simple words" request.
+
+EVAL GATE (every generated answer, in order)
+1. JSON parses and the route is allowed.
+2. Digit check: no digits outside placeholders; every placeholder is a known key.
+3. After filling: every number in the final text belongs to the allowed set from compute().
+4. Advice phrases (blocklist: "you should", "i recommend", "buy", "sell", "switch to", "redeem", "stop your sip", "continue your sip", "better fund", "best fund") must not appear.
+5. Fear/urgency terms (blocklist: "panic", "crash", "danger", "hurry", "last chance", "don't miss", "losing everything", "wipe out", "disaster", "alarming") must not appear.
+6. Readability: average sentence length at most 22 words, answer at most 110 words.
+7. For explanation questions the stated relation (SIP lower, higher or equal to the fund) must match compute()'s relation flag, using a strict yes/no LLM judge at temperature 0 (labelled as an LLM judge in the README).
+On failure retry once with the failure reason added. If it fails again, show the fallback standard explanation. Never show an unverified answer.
+
+LOGGING
+Append one JSON line per request to logs/requests.jsonl: timestamp, scenario, question, route, checks passed or failed, fallback used, latency. No personal data.
+
+GOLDEN SET AND EVAL RUNNER
+- golden_set.json is provided (10 scenarios, 32 cases: A explanations, B in-scope questions, C adversarial, D not-sure). Do not change it without telling me.
+- eval.py runs every case through the real pipeline and writes eval_results.json and a readable table: numeric accuracy (target 100%), required-facts pass, routing accuracy on C and D cases (target 100%), advice-language rate (target 0%), fear-language rate (target 0%), readability pass rate, fallback rate, latency p50 and p95. Print every failed case with the reason. Rerun after any prompt or gate change.
+
+README
+Problem, user, where AI earns its place (explanations that adapt to any SIP shape and free-form questions in the user's own words, including Hinglish) and what a non-AI version would miss (a fixed template covers only the cases written in advance); architecture; how the gate and fallbacks work; the tester-mode limitation; which screens are static and why; how to run eval.py; latest eval table; known limitations; and the disclaimer that this is educational and not investment advice.
+
+STAGES (stop after each and show me the result)
+1. compute.py plus unit tests against golden_set.json, and the static data module.
+2. All five screens with static content, navigation, toggle and bottom nav working, no AI yet. Check the numbers on every screen (₹12,300, -₹1,700, -12.14%, 274.86 units, ₹50.93, ₹44.75, ₹23,100, +₹2,100, ₹35,400, +₹400, +1.14%).
+3. Generated Smart Digest through the gate, with templates and fallback.
+4. The Ask card with all states.
+5. eval.py and eval_results.json; fix failures until targets are met.
+6. Deploy to Streamlit Community Cloud and test the live URL on a phone, end to end from Home to Fund History.
+
+DONE WHEN
+- Base data reproduces ₹12,300, -₹1,700, -12.14%, 274.86 units, ₹50.93 and ₹44.75 on every screen; Home totals are ₹35,000 / ₹35,400 / +₹400.
+- Navigation works Home -> My SIPs -> SIP Overview -> My Investment Analysis <-> Fund History, plus back arrows and the bottom nav.
+- "Should I stop my SIP?" returns a decline with official sources; an unverifiable answer shows the standard explanation; eval targets are met; Fund History has no AI claims.
+- The live URL works on mobile with no flicker between screens.
+
+
+Screen are saved in Screen folder. Golden set / evidence log is saved in Evidence_log folder
